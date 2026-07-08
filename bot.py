@@ -42,25 +42,68 @@ def run_health_server():
 threading.Thread(target=run_health_server, daemon=True).start()
 # --- Конец мини веб-сервера ---
 
-WAITING_REVIEW = 0
+# Этапы: сначала оценка, потом отзыв
+WAITING_RATING, WAITING_REVIEW = range(2)
 pending_reviews = {}
 
+# Приветствие (первая часть, до выбора оценки)
 WELCOME_TEXT = (
+    "🤝 <b>Спасибо, что были с нами!</b>\n\n"
     "Если вас всё устроило, будем очень благодарны, если вы оставите отзыв "
-    "о нашем сотрудничестве. Для повышения доверия к отзывам прошу, по возможности, "
-    "приложить любой скриншот, подтверждающий сделку (например, часть нашей переписки, "
-    "подтверждение оплаты, заказа или любой другой скриншот, который не содержит "
-    "ваших личных данных). Это поможет другим людям убедиться, что отзыв оставлен "
-    "реальным клиентом. Спасибо вам за доверие и уделённое время! 🤝\n\n"
+    "о нашем сотрудничестве.\n\n"
+    "Для повышения доверия к отзывам прошу, по возможности, приложить "
+    "<b>любой скриншот, подтверждающий сделку</b> (например, часть нашей переписки, "
+    "подтверждение оплаты, заказа или любой другой скриншот, который "
+    "<b>не содержит ваших личных данных</b>).\n\n"
+    "Это поможет другим людям убедиться, что отзыв оставлен реальными людьми.\n\n"
+    "<i>Спасибо вам за доверие и уделённое время!</i> 🤝\n\n"
+    "➖➖➖➖➖➖➖➖➖\n\n"
+    "Для начала, пожалуйста, оцените наше сотрудничество:"
+)
+
+# Инструкция после выбора оценки
+REVIEW_INSTRUCTION = (
     "📝 Напишите ваш отзыв одним сообщением.\n"
-    "📎 Если хотите приложить скриншот — прикрепите фото и напишите отзыв "
+    "📎 Хотите приложить скриншот — прикрепите фото и напишите отзыв "
     "в подписи к нему."
 )
 
 
+def rating_keyboard():
+    """Кнопки с оценкой от 1 до 5"""
+    buttons = [
+        InlineKeyboardButton(f"{i}⭐", callback_data=f"rate_{i}")
+        for i in range(1, 6)
+    ]
+    return InlineKeyboardMarkup([buttons])
+
+
+def stars(rating: int) -> str:
+    """Число в звёзды: 4 -> ⭐⭐⭐⭐"""
+    return "⭐" * rating
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
-    await update.message.reply_text(WELCOME_TEXT)
+    await update.message.reply_text(
+        WELCOME_TEXT,
+        reply_markup=rating_keyboard(),
+        parse_mode='HTML',
+    )
+    return WAITING_RATING
+
+
+async def handle_rating(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь выбрал оценку"""
+    query = update.callback_query
+    await query.answer()
+
+    rating = int(query.data.replace("rate_", ""))
+    context.user_data['rating'] = rating
+
+    await query.edit_message_text(
+        f"Ваша оценка: {stars(rating)}\n\n{REVIEW_INSTRUCTION}"
+    )
     return WAITING_REVIEW
 
 
@@ -97,11 +140,13 @@ async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
                         review_text: str, screenshot_id):
     user = update.effective_user
     review_id = str(uuid.uuid4())[:8]
+    rating = context.user_data.get('rating', 0)
 
     pending_reviews[review_id] = {
         'first_name': user.first_name,
         'review_text': review_text,
         'screenshot_id': screenshot_id,
+        'rating': rating,
         'user_id': user.id,
         'timestamp': datetime.now(),
     }
@@ -114,6 +159,7 @@ async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
     caption = (
         f"📋 НОВЫЙ ОТЗЫВ НА МОДЕРАЦИЮ\n\n"
         f"👤 От: {user.first_name}\n"
+        f"⭐ Оценка: {stars(rating)} ({rating}/5)\n"
         f"💬 Текст: \"{review_text}\"\n"
         f"📎 Скриншот: {'есть' if screenshot_id else 'нет'}\n\n"
         f"⏰ {datetime.now().strftime('%d.%m.%Y в %H:%M')}"
@@ -159,7 +205,8 @@ async def approve_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     review = pending_reviews[review_id]
 
     caption_text = (
-        f"⭐ <b>ОТЗЫВ ОТ {review['first_name'].upper()}</b>\n\n"
+        f"⭐ <b>ОТЗЫВ ОТ {review['first_name'].upper()}</b>\n"
+        f"{stars(review['rating'])} ({review['rating']}/5)\n\n"
         f"\"{review['review_text']}\"\n\n"
         f"<i>{review['timestamp'].strftime('%d.%m.%Y в %H:%M')}</i>"
     )
@@ -226,6 +273,9 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            WAITING_RATING: [
+                CallbackQueryHandler(handle_rating, pattern="^rate_")
+            ],
             WAITING_REVIEW: [
                 MessageHandler(
                     (filters.TEXT | filters.PHOTO) & ~filters.COMMAND,
