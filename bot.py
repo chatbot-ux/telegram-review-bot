@@ -192,7 +192,11 @@ async def main():
     """Запуск бота"""
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Диалог для пользователей
+    # Обработчики кнопок модерации
+    app.add_handler(CallbackQueryHandler(approve_review, pattern="^approve_"))
+    app.add_handler(CallbackQueryHandler(reject_review, pattern="^reject_"))
+    
+    # Основной диалог
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -202,14 +206,10 @@ async def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     
-    # Обработчики кнопок модерации
-    app.add_handler(CallbackQueryHandler(approve_review, pattern="^approve_"))
-    app.add_handler(CallbackQueryHandler(reject_review, pattern="^reject_"))
-    
-    # Основной диалог
     app.add_handler(conv_handler)
     
     await app.run_polling()
 
 if __name__ == '__main__':
-    app.run_polling()
+    import asyncio
+    asyncio.run(main())
