@@ -18,7 +18,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-# --- Мини веб-сервер для Render (чтобы был открытый порт) ---
+# --- Мини веб-сервер для Render ---
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -42,10 +42,7 @@ def run_health_server():
 threading.Thread(target=run_health_server, daemon=True).start()
 # --- Конец мини веб-сервера ---
 
-# Один этап
 WAITING_REVIEW = 0
-
-# Хранилище отзывов на модерации
 pending_reviews = {}
 
 WELCOME_TEXT = (
@@ -57,24 +54,19 @@ WELCOME_TEXT = (
     "реальным клиентом. Спасибо вам за доверие и уделённое время! 🤝\n\n"
     "📝 Напишите ваш отзыв одним сообщением.\n"
     "📎 Если хотите приложить скриншот — прикрепите фото и напишите отзыв "
-    "в подписи к нему.\n\n"
-    "Можно отправить отзыв и без скриншота — просто напишите текст."
+    "в подписи к нему."
 )
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало — приветствие и просьба оставить отзыв"""
     context.user_data.clear()
     await update.message.reply_text(WELCOME_TEXT)
     return WAITING_REVIEW
 
 
 async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Принимаем отзыв: текст, фото с подписью, или фото + текст отдельно"""
     msg = update.message
-    user = update.effective_user
 
-    # Вариант 1: фото с подписью (текст + скриншот в одном сообщении)
     if msg.photo and msg.caption:
         return await submit_review(
             update, context,
@@ -82,18 +74,14 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             screenshot_id=msg.photo[-1].file_id,
         )
 
-    # Вариант 2: фото без подписи — сохраняем фото, просим текст
     if msg.photo and not msg.caption:
         context.user_data['screenshot_id'] = msg.photo[-1].file_id
         await msg.reply_text(
-            "📸 Скриншот получен!\n\n"
-            "Теперь напишите текст вашего отзыва:"
+            "📸 Скриншот получен!\n\nТеперь напишите текст вашего отзыва:"
         )
         return WAITING_REVIEW
 
-    # Вариант 3: текст
     if msg.text:
-        # Если ранее было отправлено фото без подписи — объединяем
         screenshot_id = context.user_data.get('screenshot_id')
         return await submit_review(
             update, context,
@@ -101,21 +89,19 @@ async def handle_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             screenshot_id=screenshot_id,
         )
 
-    # Что-то другое (стикер, голосовое и т.д.)
     await msg.reply_text("Пожалуйста, отправьте текст отзыва или фото с подписью.")
     return WAITING_REVIEW
 
 
 async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
-                        review_text: str, screenshot_id: str | None):
-    """Сохраняем отзыв и отправляем админу на модерацию"""
+                        review_text: str, screenshot_id):
     user = update.effective_user
     review_id = str(uuid.uuid4())[:8]
 
     pending_reviews[review_id] = {
         'first_name': user.first_name,
         'review_text': review_text,
-        'screenshot_id': screenshot_id,  # может быть None
+        'screenshot_id': screenshot_id,
         'user_id': user.id,
         'timestamp': datetime.now(),
     }
@@ -125,7 +111,6 @@ async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "После одобрения он появится в группе!"
     )
 
-    # Отправляем админу
     caption = (
         f"📋 НОВЫЙ ОТЗЫВ НА МОДЕРАЦИЮ\n\n"
         f"👤 От: {user.first_name}\n"
@@ -143,16 +128,12 @@ async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if screenshot_id:
         await context.bot.send_photo(
-            chat_id=ADMIN_ID,
-            photo=screenshot_id,
-            caption=caption,
-            reply_markup=keyboard,
+            chat_id=ADMIN_ID, photo=screenshot_id,
+            caption=caption, reply_markup=keyboard,
         )
     else:
         await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=caption,
-            reply_markup=keyboard,
+            chat_id=ADMIN_ID, text=caption, reply_markup=keyboard,
         )
 
     context.user_data.clear()
@@ -160,7 +141,6 @@ async def submit_review(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def edit_moderation_message(query, new_text: str):
-    """Обновляем сообщение модерации (у фото - caption, у текста - text)"""
     if query.message.photo:
         await query.edit_message_caption(caption=new_text)
     else:
@@ -168,10 +148,8 @@ async def edit_moderation_message(query, new_text: str):
 
 
 async def approve_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админ одобрил отзыв"""
     query = update.callback_query
     await query.answer()
-
     review_id = query.data.replace("approve_", "")
 
     if review_id not in pending_reviews:
@@ -186,19 +164,14 @@ async def approve_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<i>{review['timestamp'].strftime('%d.%m.%Y в %H:%M')}</i>"
     )
 
-    # Публикуем в группу (с фото или без)
     if review['screenshot_id']:
         await context.bot.send_photo(
-            chat_id=GROUP_ID,
-            photo=review['screenshot_id'],
-            caption=caption_text,
-            parse_mode='HTML',
+            chat_id=GROUP_ID, photo=review['screenshot_id'],
+            caption=caption_text, parse_mode='HTML',
         )
     else:
         await context.bot.send_message(
-            chat_id=GROUP_ID,
-            text=caption_text,
-            parse_mode='HTML',
+            chat_id=GROUP_ID, text=caption_text, parse_mode='HTML',
         )
 
     await edit_moderation_message(query, "✅ Отзыв одобрен и опубликован!")
@@ -215,10 +188,8 @@ async def approve_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reject_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Админ отклонил отзыв"""
     query = update.callback_query
     await query.answer()
-
     review_id = query.data.replace("reject_", "")
 
     if review_id not in pending_reviews:
@@ -226,7 +197,6 @@ async def reject_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     review = pending_reviews[review_id]
-
     await edit_moderation_message(query, "❌ Отзыв отклонён")
 
     try:
@@ -242,20 +212,17 @@ async def reject_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена"""
     await update.message.reply_text("Отменено. Начать заново: /start")
     context.user_data.clear()
     return ConversationHandler.END
 
 
-print("Бот запущен!")
-    app.run_polling(drop_pending_updates=True)
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # Кнопки модерации
     app.add_handler(CallbackQueryHandler(approve_review, pattern="^approve_"))
     app.add_handler(CallbackQueryHandler(reject_review, pattern="^reject_"))
 
-    # Диалог с пользователем — один этап
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -271,7 +238,7 @@ print("Бот запущен!")
     app.add_handler(conv_handler)
 
     print("Бот запущен!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == '__main__':
