@@ -248,9 +248,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-def main():
-    """Запуск бота"""
-    app = Application.builder().token(BOT_TOKEN).build()
+print("Бот запущен!")
+    app.run_polling(drop_pending_updates=True)
 
     # Кнопки модерации
     app.add_handler(CallbackQueryHandler(approve_review, pattern="^approve_"))
