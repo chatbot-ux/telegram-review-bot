@@ -18,6 +18,30 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
+# --- Мини веб-сервер для Render (чтобы был открытый порт) ---
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running!")
+
+    def log_message(self, format, *args):
+        pass  # не засоряем логи
+
+
+def run_health_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
+
+threading.Thread(target=run_health_server, daemon=True).start()
+# --- Конец мини веб-сервера ---
+
 # Этапы диалога
 WAITING_REVIEW, WAITING_SCREENSHOT = range(2)
 
@@ -76,7 +100,7 @@ async def handle_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "После одобрения он появится в группе!"
     )
 
-    # Отправляем админу
+    # Отправляем админу с кнопками
     caption = (
         f"📋 НОВЫЙ ОТЗЫВ НА МОДЕРАЦИЮ\n\n"
         f"👤 От: {first_name}\n"
@@ -179,10 +203,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    """Запуск бота (БЕЗ async — run_polling сам управляет циклом)"""
+    """Запуск бота"""
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Кнопки модерации (должны быть ДО ConversationHandler)
+    # Кнопки модерации
     app.add_handler(CallbackQueryHandler(approve_review, pattern="^approve_"))
     app.add_handler(CallbackQueryHandler(reject_review, pattern="^reject_"))
 
